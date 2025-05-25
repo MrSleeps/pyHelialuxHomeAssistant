@@ -31,14 +31,12 @@ class Controller:
         minutes = duration % 60
         return "%02d:%02d" % (hours, minutes)
 
-    def normalize_brightness(self,val):
+    def normalize_brightness(self, val):
         """Normalize brightness from HA's 0-255 to Helialux's 0-100 scale."""
-        if val < 0:
-            return 0
-        elif val > 255:
-            return 100  # Max brightness in Helialux is 100
-        else:
-            return (val * 100) // 255  # Normalize to 0-100 range
+        # Remove any existing normalization
+        if val > 100:  # If value is already in 0-255 range
+            return min(100, max(0, round((val / 255) * 100)))
+        return min(100, max(0, round(val)))  # If value is already in 0-100 range
 
     def parse_devvars(self,string):
         try:
@@ -197,14 +195,18 @@ class Controller:
             return {}
 
         try:
-            return {
-                "device_type": parsed_devvars["info"][0] if len(parsed_devvars["info"]) > 0 else "Unknown",
-                "hardware_version": parsed_devvars["info"][1] if len(parsed_devvars["info"]) > 1 else "Unknown",
-                "firmware_version": parsed_devvars["info"][2] if len(parsed_devvars["info"]) > 2 else "Unknown",
+            device_type = f"{parsed_devvars['info'][0]} {parsed_statusvars.get('lamp', 'Unknown')}"
+            device_info = {
+#                "device_type": parsed_devvars["info"][0] if len(parsed_devvars["info"]) > 0 else "Unknown",
+                "device_type": device_type if len(parsed_devvars["info"]) > 0 else "Unknown",
+                "hardware_version": parsed_devvars["info"][1].lstrip('V') if len(parsed_devvars["info"]) > 1 else "Unknown",
+                "firmware_version": parsed_devvars["info"][2].lstrip('V') if len(parsed_devvars["info"]) > 2 else "Unknown",
                 "ip_address": parsed_devvars["info"][3] if len(parsed_devvars["info"]) > 3 else "Unknown",
                 "mac_address": parsed_devvars["info"][4] if len(parsed_devvars["info"]) > 4 else "Unknown",
                 "light_channels": parsed_statusvars.get("lamp", "Unknown"),
             }
+            _LOGGER.debug(f"Device info: {device_info}")  # Debug log
+            return device_info
         except KeyError as e:
             _LOGGER.error(f"Missing key in parsed data: {e}")
             return {}
@@ -216,15 +218,13 @@ class Controller:
         session = await self._get_session()
         url = f"{self._url}/stat"
         
-        # Ensure manual color simulation is enabled first
-        await self.start_manual_color_simulation(60)  # Set it for 60 minutes
-
+        # Ensure values are in correct range (0-100) without double normalization
         params = {
             "action": 10,
-            "ch1": self.normalize_brightness(white),
-            "ch2": self.normalize_brightness(blue),
-            "ch3": self.normalize_brightness(green),
-            "ch4": self.normalize_brightness(red),
+            "ch1": min(100, max(0, round(white))),  # Directly use 0-100 values
+            "ch2": min(100, max(0, round(blue))),
+            "ch3": min(100, max(0, round(green))),
+            "ch4": min(100, max(0, round(red))),
         }
 
         _LOGGER.debug("Sending color update to Juwel: %s", params)
